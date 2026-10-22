@@ -1,54 +1,64 @@
 import logging
 import pickle
 
+from flask import Flask
+from flask import request
+from flask import jsonify
+
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
 )
 logger = logging.getLogger(__name__)
 
+app = Flask('churn_service')
+
 C = 1.0
 MODEL_FILE = f'model_C={C}.bin'
 
 
 def load_model(path):
+    logger.info('Loading model from %s', path)
     with open(path, 'rb') as f_in:
         dv, model = pickle.load(f_in)
+    
+    logger.info('Model loaded')
     return dv, model
 
 
-def predict_single(customer, dv, model):
-    X = dv.transform([customer])
-    return model.predict_proba(X)[0, 1]
+# load once at startup (module level) so the route can use them
+dv, model = load_model(MODEL_FILE)
+
+# POST means client sends data
+@app.route('/predict', methods=['POST'])
+def predict():
+    # Read the customer data (JSON) sent by the client
+    customer = request.get_json()
+    logger.info('Received prediction request')
+
+    try:
+        X = dv.transform([customer])
+        y_pred = model.predict_proba(X)[0, 1]
+    except Exception:
+        logger.exception('Prediction failed')   # logs the full traceback
+        return jsonify({'error': 'invalid input'}), 400
+
+    churn = y_pred >= 0.5
+    logger.info('Churn probability: %.3f (churn=%s)', y_pred, churn)
+
+    response = {
+        'churn': bool(churn),
+        'churn_probability': float(y_pred)
+    }
+
+    # Send the dict back to the client as JSON
+    return jsonify(response)
 
 
-customer = {
-    'gender': 'female',
-    'seniorcitizen': 0,
-    'partner': 'yes',
-    'dependents': 'no',
-    'phoneservice': 'no',
-    'multiplelines': 'no_phone_service',
-    'internetservice': 'dsl',
-    'onlinesecurity': 'no',
-    'onlinebackup': 'yes',
-    'deviceprotection': 'no',
-    'techsupport': 'no',
-    'streamingtv': 'no',
-    'streamingmovies': 'no',
-    'contract': 'month-to-month',
-    'paperlessbilling': 'yes',
-    'paymentmethod': 'electronic_check',
-    'tenure': 1,
-    'monthlycharges': 29.85,
-    'totalcharges': 29.85
-}
-
-
-if __name__ == '__main__':
-    logger.info('Loading model from %s', MODEL_FILE)
-    dv, model = load_model(MODEL_FILE)
-    logger.info('Model loaded')
-
-    churn_probability = predict_single(customer, dv, model)
-    logger.info('Churn probability: %.3f', churn_probability)
+if __name__ == '__main__':  # only when run directly, not when imported
+    app.run(
+        debug=True,      # auto-reload and show detailed errors
+        host='0.0.0.0',  # accept connections from any machine
+        port=9696        # port to listen on
+    )
