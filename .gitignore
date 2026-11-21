@@ -218,3 +218,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+modules/08_deep_learning/clothing-dataset-small/
